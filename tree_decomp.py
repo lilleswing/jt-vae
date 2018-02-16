@@ -59,6 +59,11 @@ def get_cluster_atoms(m):
     ])
     if count >= 3:
       v0.add(atom_id)
+  v1 = [('non_ring', x) for x in v1]
+  v2 = [('ring', x) for x in v2]
+  all_clusters = set()
+  all_clusters.update(v1)
+  all_clusters.update(v2)
   return all_clusters
 
 
@@ -101,20 +106,45 @@ def replace_dummy_with_h(m):
     if atom.GetAtomicNum() == 1:
       emol.ReplaceAtom(atom.GetIdx(), Chem.Atom(0))
   m = emol.GetMol()
-  for atom in m.GetAtoms():
-    if atom.GetAtomicNum() == 0:
-      for bond in atom.GetBonds():
-        bond.SetBondType(Chem.BondType.UNSPECIFIED)
-    atom.SetIsAromatic(False)
+  # for atom in m.GetAtoms():
+  #   if atom.GetAtomicNum() == 0:
+  #     for bond in atom.GetBonds():
+  #       bond.SetBondType(Chem.BondType.UNSPECIFIED)
+    # atom.SetIsAromatic(False)
   return m
 
 
+def update_aromatic(m, cluster):
+  if cluster[0] == 'non_ring':
+    for atom in m.GetAtoms():
+      atom.SetIsAromatic(False)
+  print(Chem.MolToSmiles(m), cluster)
+  Chem.Kekulize(m, clearAromaticFlags=True)
+  return m
+
+
+def fast_break(mol, atom_ids):
+  atom_ids = atom_ids[1]
+  bonds_to_keep = []
+  for bond in mol.GetBonds():
+    if bond.GetBeginAtom().GetIdx() in atom_ids and bond.GetEndAtom().GetIdx() in atom_ids:
+      bonds_to_keep.append(bond.GetIdx())
+  return Chem.PathToSubmol(mol, bonds_to_keep)
+
+
 def create_substructure(mol, cluster):
-  split_mol = frag_on_bonds(mol, cluster)
-  bonds_to_keep = bonds_connected_to_atom(split_mol, list(cluster)[0])
-  frag = Chem.PathToSubmol(split_mol, bonds_to_keep)
-  frag.UpdatePropertyCache()
-  return replace_dummy_with_h(frag)
+  try:
+    split_mol = frag_on_bonds(mol, cluster[1])
+    bonds_to_keep = bonds_connected_to_atom(split_mol, list(cluster)[1][0])
+    frag = Chem.PathToSubmol(split_mol, bonds_to_keep)
+    frag.UpdatePropertyCache()
+    return replace_dummy_with_h(frag)
+  except Exception as e:
+    print(Chem.MolToSmiles(mol))
+    # Giant single "cluster" things
+    # C1CSCCSCCS1
+    # C1CSCCSCCCSCCSC1
+    return None
 
 
 def main():
@@ -123,11 +153,14 @@ def main():
   substructure_smiles = set()
   for mol in mols:
     mol = Chem.MolFromSmiles(mol)
-    mol = Chem.AddHs(mol)
+    Chem.Kekulize(mol)
+    Chem.AddHs(mol)
     clusters = get_cluster_atoms(mol)
     for cluster in clusters:
-      fragment = create_substructure(mol, cluster)
-      substructure_smiles.add(Chem.MolToSmiles(fragment))
+      fragment = fast_break(mol, cluster)
+      if fragment is None:
+        continue
+      substructure_smiles.add(Chem.MolToSmiles(fragment, kekuleSmiles=True))
   print(len(substructure_smiles))
   with open('data/fragments.txt', 'w') as fout:
     fout.write(json.dumps(list(substructure_smiles)))
