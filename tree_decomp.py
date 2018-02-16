@@ -1,5 +1,6 @@
 import itertools
 from rdkit import Chem
+import copy
 from rdkit.Chem import EditableMol
 import networkx as nx
 import json
@@ -61,22 +62,68 @@ def get_cluster_atoms(m):
   return all_clusters
 
 
-def create_substructure(m, atom_ids):
+def bonds_connected_to_atom(mol, atom_idx):
+  atoms_used = set([])
+  queue = [atom_idx]
+  bonds_used = set()
+  while len(queue) > 0:
+    node, queue = queue[0], queue[1:]
+    if node in atoms_used:
+      continue
+    atoms_used.add(node)
+    atom = mol.GetAtomWithIdx(node)
+    bonds = atom.GetBonds()
+    for bond in bonds:
+      begin, end = bond.GetBeginAtom().GetIdx(), bond.GetEndAtom().GetIdx()
+      bonds_used.add(bond.GetIdx())
+      if begin not in atoms_used:
+        queue.append(begin)
+      if end not in atoms_used:
+        queue.append(end)
+  return list(bonds_used)
+
+
+def frag_on_bonds(m, atom_ids):
+  breaking_bonds = list()
+  for bond in m.GetBonds():
+    start, end = bond.GetBeginAtom().GetIdx(), bond.GetEndAtom().GetIdx()
+    if start in atom_ids and end not in atom_ids:
+      breaking_bonds.append(bond.GetIdx())
+    if end in atom_ids and start not in atom_ids:
+      breaking_bonds.append(bond.GetIdx())
+  my_copy = copy.deepcopy(m)
+  return Chem.FragmentOnBonds(my_copy, breaking_bonds)
+
+
+def replace_dummy_with_h(m):
   emol = EditableMol(m)
-  to_remove_ids = [x.GetIdx() for x in m.GetAtoms()]
-  for atom_id in atom_ids:
-    to_remove_ids.remove(atom_id)
-  to_remove_ids.reverse()
-  for atom_id in to_remove_ids:
-    emol.RemoveAtom(atom_id)
-  return emol.GetMol()
+  for atom in m.GetAtoms():
+    if atom.GetAtomicNum() == 1:
+      emol.ReplaceAtom(atom.GetIdx(), Chem.Atom(0))
+  m = emol.GetMol()
+  for atom in m.GetAtoms():
+    if atom.GetAtomicNum() == 0:
+      for bond in atom.GetBonds():
+        bond.SetBondType(Chem.BondType.UNSPECIFIED)
+    atom.SetIsAromatic(False)
+  return m
+
+
+def create_substructure(mol, cluster):
+  split_mol = frag_on_bonds(mol, cluster)
+  bonds_to_keep = bonds_connected_to_atom(split_mol, list(cluster)[0])
+  frag = Chem.PathToSubmol(split_mol, bonds_to_keep)
+  frag.UpdatePropertyCache()
+  return replace_dummy_with_h(frag)
 
 
 def main():
   lines = open('data/250k_rndm_zinc_drugs_clean.smi').readlines()
-  mols = [Chem.MolFromSmiles(x) for x in lines]
+  mols = [x for x in lines]
   substructure_smiles = set()
   for mol in mols:
+    mol = Chem.MolFromSmiles(mol)
+    mol = Chem.AddHs(mol)
     clusters = get_cluster_atoms(mol)
     for cluster in clusters:
       fragment = create_substructure(mol, cluster)
