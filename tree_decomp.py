@@ -110,7 +110,7 @@ def replace_dummy_with_h(m):
   #   if atom.GetAtomicNum() == 0:
   #     for bond in atom.GetBonds():
   #       bond.SetBondType(Chem.BondType.UNSPECIFIED)
-    # atom.SetIsAromatic(False)
+  # atom.SetIsAromatic(False)
   return m
 
 
@@ -147,22 +147,42 @@ def create_substructure(mol, cluster):
     return None
 
 
+def to_single_bond_remove_hs(mol):
+  atom_map = {}
+  emol = EditableMol(Chem.MolFromSmiles(""))
+  for atom in mol.GetAtoms():
+    if atom.GetAtomicNum() > 1:
+      new_idx = emol.AddAtom(Chem.Atom(atom.GetAtomicNum()))
+      atom_map[atom.GetIdx()] = new_idx
+
+  for bond in mol.GetBonds():
+    begin, end = bond.GetBeginAtom(), bond.GetEndAtom()
+    if begin.GetAtomicNum() <= 1:
+      continue
+    if end.GetAtomicNum() <= 1:
+      continue
+    new_idxs = atom_map[begin.GetIdx()], atom_map[end.GetIdx()]
+    emol.AddBond(new_idxs[0], new_idxs[1], Chem.BondType.SINGLE)
+  return emol.GetMol()
+
+
 def main():
   lines = open('data/250k_rndm_zinc_drugs_clean.smi').readlines()
   mols = [x for x in lines]
   substructure_smiles = set()
   for mol in mols:
     mol = Chem.MolFromSmiles(mol)
-    Chem.Kekulize(mol)
-    Chem.AddHs(mol)
+    # Chem.Kekulize(mol)
+    # Chem.AddHs(mol)
     clusters = get_cluster_atoms(mol)
     for cluster in clusters:
       fragment = fast_break(mol, cluster)
       if fragment is None:
         continue
-      substructure_smiles.add(Chem.MolToSmiles(fragment, kekuleSmiles=True))
+      fragment = to_single_bond_remove_hs(fragment)
+      substructure_smiles.add(Chem.MolToSmiles(fragment))
   print(len(substructure_smiles))
-  with open('data/fragments.txt', 'w') as fout:
+  with open('data/fragments_single_bonds_only.json', 'w') as fout:
     fout.write(json.dumps(list(substructure_smiles)))
 
 
