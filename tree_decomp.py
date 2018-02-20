@@ -1,9 +1,10 @@
-import itertools
-from rdkit import Chem
 import copy
-from rdkit.Chem import EditableMol
-import networkx as nx
 import json
+
+import itertools
+import networkx as nx
+from rdkit import Chem
+from rdkit.Chem import EditableMol
 
 flatten = lambda l: [item for sublist in l for item in sublist]
 
@@ -166,25 +167,66 @@ def to_single_bond_remove_hs(mol):
   return emol.GetMol()
 
 
+def has_ring(x):
+  r_info = x.GetRingInfo()
+  return len(r_info.BondRings()) > 0
+
+
+def remove_any_atom_bonds(m):
+  if not has_ring(m):
+    return m
+  emol = EditableMol(Chem.MolFromSmiles(""))
+  atom_map = {}
+  for atom in m.GetAtoms():
+    if atom.GetAtomicNum() == 0:
+      continue
+    new_idx = emol.AddAtom(Chem.Atom(atom.GetAtomicNum()))
+    atom_map[atom.GetIdx()] = new_idx
+  for bond in m.GetBonds():
+    start, end = bond.GetBeginAtom(), bond.GetEndAtom()
+    if start.GetAtomicNum() == 0:
+      continue
+    if end.GetAtomicNum() == 0:
+      continue
+    start, end = atom_map[start.GetIdx()], atom_map[end.GetIdx()]
+    emol.AddBond(start, end, bond.GetBondType())
+  return emol.GetMol()
+
+
 def main():
   lines = open('data/250k_rndm_zinc_drugs_clean.smi').readlines()
   mols = [x for x in lines]
   substructure_smiles = set()
   for mol in mols:
     mol = Chem.MolFromSmiles(mol)
-    # Chem.Kekulize(mol)
-    # Chem.AddHs(mol)
+    mol = Chem.AddHs(mol)
     clusters = get_cluster_atoms(mol)
     for cluster in clusters:
-      fragment = fast_break(mol, cluster)
+      fragment = create_substructure(mol, cluster)
       if fragment is None:
         continue
-      fragment = to_single_bond_remove_hs(fragment)
+      # fragment = to_single_bond_remove_hs(fragment)
       substructure_smiles.add(Chem.MolToSmiles(fragment))
   print(len(substructure_smiles))
-  with open('data/fragments_single_bonds_only.json', 'w') as fout:
+  with open('data/frag_with_aromatic.json', 'w') as fout:
     fout.write(json.dumps(list(substructure_smiles)))
+  with open('data/frag_with_aromatic.csv', 'w') as fout:
+    fout.write('smiles\n')
+    for line in substructure_smiles:
+      fout.write("%s\n" % line)
+  substructures = [Chem.MolFromSmiles(x, sanitize=False) for x in substructure_smiles]
+  substructures = [remove_any_atom_bonds(x) for x in substructures]
+  substructure_smiles = [remove_any_atom_bonds(x) for x in substructures]
+  with open('data/frag_reduced.json', 'w') as fout:
+    fout.write(json.dumps(list(substructure_smiles)))
+  with open('data/frag_reduced.csv', 'w') as fout:
+    fout.write('smiles\n')
+    for line in substructure_smiles:
+      fout.write("%s\n" % line)
+
+
 
 
 if __name__ == "__main__":
   main()
+
